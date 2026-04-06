@@ -123,6 +123,7 @@ class M1DataPipeline:
             df_valid = df.filter(pl.col("timestamp") > 0)
             df_deduped = df_valid.unique(subset=["user_id", "item_id", "timestamp"])
 
+            # 识别刷号用户：PV数量超过阈值
             suspect_users = (
                 df_deduped.filter(pl.col("behavior_type") == "pv")
                   .group_by("user_id")
@@ -131,6 +132,7 @@ class M1DataPipeline:
                   .select("user_id")
             )
 
+            # 剔除刷号用户的所有行为记录（而不仅仅是PV）
             cleaned = df_deduped.join(suspect_users, on="user_id", how="anti")
 
             cleaned = cleaned.with_columns(
@@ -157,15 +159,26 @@ class M1DataPipeline:
         清洗逻辑（所有分区一致）：
         1. 过滤无效时间戳（timestamp > 0）
         2. 去重（user_id, item_id, timestamp）
-        3. 识别并剔除异常刷 PV 用户
+        3. 识别并剔除异常刷 PV 用户的所有行为记录（不仅仅是PV）
         4. 生成 session_id
 
+        修复说明：
+        - 原代码只在PV分区剔除刷号用户，导致其buy/cart/fav记录被保留
+        - 修复后：先从PV数据识别刷号用户，然后在所有分区都剔除这些用户
+        
         优化：对于大分区，使用分块处理避免内存溢出。
 
         :param raw_df: 原始 LazyFrame（未清洗）
         """
         self.logger.info("[Load] 按行为类型分区写入 Parquet，并执行完整清洗...")
         os.makedirs(self.output_root, exist_ok=True)
+
+        # 阶段 0：先从PV数据中识别所有刷号用户（只需执行一次）
+        self.logger.info("[Load] 阶段 0/3：识别刷号用户...")
+        suspect_users_lazy = self._identify_suspect_users(raw_df)
+        # collect()获取刷号用户列表（user_id列表通常不会太大）
+        suspect_user_ids = suspect_users_lazy if isinstance(suspect_users_lazy, pl.DataFrame) else suspect_users_lazy.collect()
+        self.logger.info(f"[Load] 刷号用户列表已加载，共 {len(suspect_user_ids):,} 个用户")
 
         for bt in self.behavior_types:
             try:
@@ -177,20 +190,19 @@ class M1DataPipeline:
                 out_path = os.path.join(out_dir, "data.parquet")
 
                 # 阶段 1：简单过滤分区
-                self.logger.info(f"[Load][{bt}] 阶段 1/2：过滤分区 {bt}...")
+                self.logger.info(f"[Load][{bt}] 阶段 1/3：过滤分区 {bt}...")
                 df_filtered = raw_df.filter(pl.col("behavior_type") == bt)
                 df_filtered.sink_parquet(out_path)
 
                 elapsed_1 = time.time() - t_start
-                row_count_raw = pl.scan_parquet(out_path).select(pl.len()).collect().item()
+                row_count_raw = pl.scan_parquet(out_path).select(pl.len()).collect(engine="streaming").item()
                 self.logger.info(f"[Load][{bt}] 阶段 1 完成，耗时：{elapsed_1:.2f} 秒，行数：{row_count_raw:,}")
 
                 # 阶段 2：执行完整清洗（所有分区逻辑一致）
-                self.logger.info(f"[Load][{bt}] 阶段 2/2：执行完整清洗...")
+                self.logger.info(f"[Load][{bt}] 阶段 2/3：执行完整清洗...")
                 self.logger.info(f"[Load][{bt}]   - 过滤无效时间戳 (timestamp > 0)")
                 self.logger.info(f"[Load][{bt}]   - 去重 (user_id, item_id, timestamp)")
-                if bt == "pv":
-                    self.logger.info(f"[Load][{bt}]   - 识别并剔除异常刷 PV 用户 (pv_count > {self.pv_threshold})")
+                self.logger.info(f"[Load][{bt}]   - 剔除刷号用户的所有行为记录")
                 self.logger.info(f"[Load][{bt}]   - 生成 session_id")
 
                 t_clean = time.time()
@@ -198,14 +210,14 @@ class M1DataPipeline:
                 # 对于大分区，使用分块处理
                 if row_count_raw > CHUNK_THRESHOLD:
                     self.logger.info(f"[Load][{bt}] 分区较大，使用分块处理...")
-                    row_count_cleaned = self._clean_partition_chunked(out_path, bt, out_path)
+                    row_count_cleaned = self._clean_partition_chunked(out_path, bt, out_path, suspect_user_ids)
                 else:
                     # 小分区直接处理
                     df_partition = pl.scan_parquet(out_path)
-                    cleaned = self._clean_partition(df_partition, bt)
+                    cleaned = self._clean_partition(df_partition, bt, suspect_user_ids)
 
                     cleaned.sink_parquet(out_path)
-                    row_count_cleaned = pl.scan_parquet(out_path).select(pl.len()).collect().item()
+                    row_count_cleaned = pl.scan_parquet(out_path).select(pl.len()).collect(engine="streaming").item()
 
                 elapsed_2 = time.time() - t_clean
                 removed = row_count_raw - row_count_cleaned
@@ -226,23 +238,112 @@ class M1DataPipeline:
 
         self.logger.info("[Load] ✅ 全部分区写入流程结束.")
 
-    def _clean_partition(self, df: pl.LazyFrame, behavior_type: str) -> pl.LazyFrame:
+        # 最终阶段：过滤 buy_count > pv_count 的违规用户
+        self.logger.info("[Load] 最终阶段：过滤违规用户 (buy_count > pv_count)...")
+        self._filter_violators()
+
+    def _filter_violators(self) -> None:
+        """
+        过滤所有 buy_count > pv_count 的违规用户
+        确保业务逻辑合规
+        """
+        import glob as glob_module
+        
+        # 查找所有分区文件
+        partition_files = glob_module.glob(os.path.join(self.output_root, "behavior_type=*", "data.parquet"))
+        
+        if not partition_files:
+            self.logger.warning("[Filter Violators] 未找到分区文件，跳过")
+            return
+        
+        self.logger.info(f"[Filter Violators] 找到 {len(partition_files)} 个分区文件")
+        
+        # 合并所有分区
+        merged_lf = pl.scan_parquet([str(f) for f in partition_files])
+        
+        # 统计每个用户的 buy 和 pv 数量
+        user_stats = (
+            merged_lf.group_by("user_id")
+            .agg([
+                (pl.col("behavior_type") == "buy").sum().alias("buy_cnt"),
+                (pl.col("behavior_type") == "pv").sum().alias("pv_cnt"),
+            ])
+        )
+        
+        # 只保留合法用户
+        valid_users = user_stats.filter(pl.col("buy_cnt") <= pl.col("pv_cnt")).select("user_id")
+        
+        # 重新过滤所有数据
+        for bt in self.behavior_types:
+            out_dir = os.path.join(self.output_root, f"behavior_type={bt}")
+            out_path = os.path.join(out_dir, "data.parquet")
+            
+            if not os.path.exists(out_path):
+                continue
+            
+            self.logger.info(f"[Filter Violators][{bt}] 过滤违规用户...")
+            df_partition = pl.scan_parquet(out_path)
+            cleaned = df_partition.join(valid_users, on="user_id", how="inner")
+            
+            # 使用临时文件避免文件占用问题
+            temp_path = out_path + ".tmp"
+            cleaned.sink_parquet(temp_path, compression="snappy")
+            
+            # 替换原文件
+            if os.path.exists(temp_path):
+                os.remove(out_path)
+                os.rename(temp_path, out_path)
+            
+            row_count = pl.scan_parquet(out_path).select(pl.len()).collect(engine="streaming").item()
+            self.logger.info(f"[Filter Violators][{bt}] 清洗后行数: {row_count:,}")
+        
+        self.logger.info("[Filter Violators] ✅ 违规用户过滤完成")
+
+    def _identify_suspect_users(self, df: pl.LazyFrame) -> pl.LazyFrame:
+        """
+        识别刷号用户（PV数量超过阈值的用户）
+        返回包含所有刷号用户user_id的LazyFrame
+
+        优化：使用 streaming 引擎避免内存溢出
+        """
+        self.logger.info(f"[Suspect Users] 识别刷号用户 (pv_count > {self.pv_threshold})...")
+
+        # 只处理PV数据，去重后统计每个用户的PV数量
+        # 使用 group_by+agg(first) 替代 unique()，支持 streaming
+        suspect_users = (
+            df.filter(pl.col("behavior_type") == "pv")
+              .filter(pl.col("timestamp") > 0)
+              .group_by(["user_id", "item_id", "timestamp"])
+              .agg(pl.first("category_id"))
+              .group_by("user_id")
+              .agg(pl.len().alias("pv_count"))
+              .filter(pl.col("pv_count") > self.pv_threshold)
+              .select("user_id")
+        )
+
+        # 使用 streaming 模式 collect 刷号用户列表（结果集通常很小）
+        try:
+            self.logger.info("[Suspect Users] 执行 streaming collect...")
+            suspect_df = suspect_users.collect(engine="streaming")
+            suspect_count = len(suspect_df)
+            self.logger.info(f"[Suspect Users] ✅ 识别到 {suspect_count:,} 个刷号用户")
+            return suspect_df
+        except Exception as e:
+            self.logger.error(f"[Suspect Users] ❌ 识别刷号用户失败: {e}")
+            raise
+
+    def _clean_partition(self, df: pl.LazyFrame, behavior_type: str, suspect_users: pl.DataFrame) -> pl.LazyFrame:
         """
         对单个分区执行完整清洗。
+
+        修复：所有分区都剔除刷号用户的记录（不仅仅是PV分区）
         """
         df_valid = df.filter(pl.col("timestamp") > 0)
         df_deduped = df_valid.unique(subset=["user_id", "item_id", "timestamp"])
 
-        if behavior_type == "pv":
-            suspect_users = (
-                df_deduped.group_by("user_id")
-                .agg(pl.len().alias("pv_count"))
-                .filter(pl.col("pv_count") > self.pv_threshold)
-                .select("user_id")
-            )
-            cleaned = df_deduped.join(suspect_users, on="user_id", how="anti")
-        else:
-            cleaned = df_deduped
+        # 修复：将 DataFrame 转为 LazyFrame 再进行 join
+        suspect_users_lazy = suspect_users.lazy()
+        cleaned = df_deduped.join(suspect_users_lazy, on="user_id", how="anti")
 
         cleaned = cleaned.with_columns(
             pl.col("timestamp").sort_by("timestamp").over("user_id").alias("ts_sorted")
@@ -256,7 +357,8 @@ class M1DataPipeline:
 
         return cleaned
 
-    def _clean_partition_chunked(self, path: str, behavior_type: str, out_path: str) -> int:
+    def _clean_partition_chunked(self, path: str, behavior_type: str, out_path: str, 
+                                  suspect_users: pl.DataFrame) -> int:
         """
         对大分区执行分块清洗，并直接写入最终文件。
         返回清洗后的行数。
@@ -265,7 +367,7 @@ class M1DataPipeline:
             chunk_paths = []
 
             df_partition = pl.scan_parquet(path)
-            total_rows = df_partition.select(pl.len()).collect().item()
+            total_rows = df_partition.select(pl.len()).collect(engine="streaming").item()
             num_chunks = (total_rows + CHUNK_SIZE - 1) // CHUNK_SIZE
 
             self.logger.info(f"[Load][{behavior_type}] 分块处理：{num_chunks} 块，每块约 {CHUNK_SIZE:,} 行")
@@ -275,7 +377,7 @@ class M1DataPipeline:
                 self.logger.info(f"[Load][{behavior_type}] 处理第 {i+1}/{num_chunks} 块（offset={offset:,}）...")
 
                 df_chunk = df_partition.slice(offset, CHUNK_SIZE)
-                cleaned_chunk = self._clean_partition(df_chunk, behavior_type)
+                cleaned_chunk = self._clean_partition(df_chunk, behavior_type, suspect_users)
 
                 chunk_path = os.path.join(temp_dir, f"chunk_{i}.parquet")
                 cleaned_chunk.sink_parquet(chunk_path)
@@ -286,5 +388,5 @@ class M1DataPipeline:
             final = pl.scan_parquet(chunk_paths)
             final.sink_parquet(out_path)
 
-            row_count = pl.scan_parquet(out_path).select(pl.len()).collect().item()
+            row_count = pl.scan_parquet(out_path).select(pl.len()).collect(engine="streaming").item()
             return row_count
