@@ -10,6 +10,14 @@
 
 import os
 import sys
+
+# ── Windows 终端编码修复 ───────────────────────────────────
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except AttributeError:
+        pass
 import time
 import signal
 import socket
@@ -190,9 +198,9 @@ def graceful_shutdown(signum=None, frame=None):
 
 # ── 主入口 ────────────────────────────────────────────────
 def main():
-    print(f"\n{Color.BOLD}{Color.BLUE}╔══════════════════════════════════════════════╗{Color.RESET}")
-    print(f"{Color.BOLD}{Color.BLUE}║  大数据分析看板 · 一键启动脚本 (Week 14)  ║{Color.RESET}")
-    print(f"{Color.BOLD}{Color.BLUE}╚══════════════════════════════════════════════╝{Color.RESET}\n")
+    print(f"\n{Color.BOLD}{Color.BLUE}{'=' * 50}{Color.RESET}")
+    print(f"{Color.BOLD}{Color.BLUE}  大数据分析看板 - 一键启动脚本 (Week 14){Color.RESET}")
+    print(f"{Color.BOLD}{Color.BLUE}{'=' * 50}{Color.RESET}\n")
 
     # 注册信号处理
     signal.signal(signal.SIGINT, graceful_shutdown)
@@ -215,7 +223,7 @@ def main():
 
         # 6. 转发子进程输出
         log_info("服务运行中... 按 Ctrl+C 退出\n")
-        print(f"{Color.GREEN}{'─' * 50}{Color.RESET}")
+        print(f"{Color.GREEN}{'-' * 50}{Color.RESET}")
         try:
             while True:
                 if server_process and server_process.poll() is not None:
