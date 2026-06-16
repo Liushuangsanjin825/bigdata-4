@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>大数据分析看板 · Week 14</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, "Microsoft YaHei", sans-serif;
+            background: #0f0f23;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+        header {
+            text-align: center;
+            padding: 1.5rem 2rem 1rem;
+            background: linear-gradient(135deg, #1a1a3e, #2d1b69);
+        }
+        header h1 { font-size: 1.6rem; }
+        header p { margin-top: 0.3rem; opacity: 0.7; font-size: 0.85rem; }
+
+        /* ── 系统状态横幅 ── */
+        .system-banner {
+            margin: 0 auto; max-width: 800px; padding: 0.5rem 1.2rem;
+            border-radius: 8px; font-size: 0.82rem; text-align: center;
+            display: none; transition: all 0.3s;
+        }
+        .system-banner.show { display: block; }
+        .system-banner.warn {
+            background: rgba(255,152,0,0.15);
+            border: 1px solid rgba(255,152,0,0.35);
+            color: #ffb74d;
+        }
+        .system-banner.info {
+            background: rgba(68,138,255,0.12);
+            border: 1px solid rgba(68,138,255,0.25);
+            color: #83b9ff;
+        }
+        .system-banner .banner-icon { margin-right: 0.4rem; }
+
+        /* ── 搜索栏 ── */
+        .search-bar {
+            display: flex; justify-content: center; padding: 1rem 1.5rem 0.5rem;
+            max-width: 800px; margin: 0 auto;
+        }
+        .search-bar input {
+            width: 100%; padding: 0.7rem 1.2rem; border-radius: 24px;
+            border: 1px solid rgba(255,255,255,0.15);
+            background: rgba(255,255,255,0.08); color: #e0e0e0;
+            font-size: 0.95rem; outline: none; transition: all 0.3s;
+        }
+        .search-bar input:focus {
+            border-color: #7c4dff; background: rgba(255,255,255,0.12);
+            box-shadow: 0 0 0 3px rgba(124,77,255,0.15);
+        }
+        .search-bar input::placeholder { color: rgba(255,255,255,0.35); }
+        .search-hint {
+            text-align: center; font-size: 0.72rem; opacity: 0.4;
+            padding-bottom: 0.3rem;
+        }
+
+        /* ── 三列图表网格 ── */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+            gap: 1.2rem; padding: 1rem 1.2rem;
+            max-width: 1500px; margin: 0 auto;
+        }
+        .chart-card {
+            background: rgba(255,255,255,0.04);
+            border-radius: 12px; padding: 0.8rem;
+            border: 1px solid rgba(255,255,255,0.07);
+            position: relative;
+        }
+        .chart-card h2 {
+            text-align: center; font-size: 1rem; color: #bbb;
+            margin-bottom: 0.3rem;
+        }
+        .chart-container { width: 100%; height: 400px; }
+
+        /* ── 图表工具栏 ── */
+        .chart-toolbar {
+            position: absolute; top: 0.6rem; right: 0.8rem; z-index: 10;
+            display: flex; gap: 0.4rem;
+        }
+        .chart-toolbar button {
+            padding: 0.25rem 0.6rem; border-radius: 4px; border: 1px solid rgba(255,255,255,0.2);
+            background: rgba(255,255,255,0.08); color: #ccc; cursor: pointer;
+            font-size: 0.75rem; transition: all 0.2s;
+        }
+        .chart-toolbar button:hover { background: rgba(255,255,255,0.18); }
+        .chart-toolbar button.active {
+            background: #7c4dff; border-color: #7c4dff; color: #fff;
+        }
+
+        /* ── 当前筛选状态指示 ── */
+        .filter-tags {
+            display: flex; justify-content: center; flex-wrap: wrap; gap: 0.5rem;
+            padding: 0.3rem 1.5rem 0.8rem; max-width: 800px; margin: 0 auto;
+        }
+        .filter-tag {
+            display: inline-flex; align-items: center; gap: 0.3rem;
+            padding: 0.25rem 0.7rem; border-radius: 14px;
+            font-size: 0.78rem; background: rgba(124,77,255,0.2);
+            border: 1px solid rgba(124,77,255,0.35); color: #b388ff;
+        }
+        .filter-tag .clear {
+            cursor: pointer; font-weight: bold; font-size: 1rem;
+            line-height: 1; opacity: 0.7;
+        }
+        .filter-tag .clear:hover { opacity: 1; }
+
+        /* ── 评论列表面板 ── */
+        .reviews-section {
+            max-width: 1500px; margin: 0 auto; padding: 0 1.2rem 1.5rem;
+        }
+        .reviews-section h2 {
+            font-size: 1rem; color: #bbb; margin-bottom: 0.6rem;
+            padding-bottom: 0.4rem; border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        .reviews-list {
+            display: flex; flex-direction: column; gap: 0.5rem;
+            max-height: 500px; overflow-y: auto;
+        }
+        .review-card {
+            background: rgba(255,255,255,0.04); border-radius: 8px;
+            padding: 0.7rem 0.9rem; border: 1px solid rgba(255,255,255,0.06);
+            font-size: 0.88rem; line-height: 1.6;
+        }
+        .review-card .meta {
+            display: flex; gap: 0.5rem; margin-bottom: 0.35rem;
+        }
+        .badge {
+            display: inline-block; padding: 0.15rem 0.55rem; border-radius: 4px;
+            font-size: 0.72rem; font-weight: 600;
+        }
+        .badge-cat { background: rgba(68,138,255,0.2); color: #83b9ff; }
+        .badge-pos { background: rgba(76,175,80,0.2); color: #81c784; }
+        .badge-neg { background: rgba(244,67,54,0.2); color: #ef9a9a; }
+        .review-text mark { background: rgba(255,235,59,0.35); color: #fff; padding: 0 0.1rem; border-radius: 2px; }
+
+        .load-more-wrap { text-align: center; padding: 0.8rem 0; }
+        .load-more-wrap button {
+            padding: 0.5rem 1.5rem; border-radius: 6px;
+            border: 1px solid rgba(255,255,255,0.2);
+            background: rgba(255,255,255,0.06); color: #ccc;
+            cursor: pointer; font-size: 0.85rem; transition: all 0.2s;
+        }
+        .load-more-wrap button:hover:not(:disabled) { background: rgba(255,255,255,0.14); }
+        .load-more-wrap button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        #noReviewsMsg {
+            text-align: center; padding: 2rem; opacity: 0.5;
+            font-size: 0.9rem; display: none;
+        }
+
+        footer {
+            text-align: center; padding: 1rem; opacity: 0.4;
+            font-size: 0.8rem; border-top: 1px solid rgba(255,255,255,0.05);
+        }
+
+        /* ── scrollbar ── */
+        .reviews-list::-webkit-scrollbar { width: 6px; }
+        .reviews-list::-webkit-scrollbar-track { background: transparent; }
+        .reviews-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>大数据分析看板</h1>
+        <p>Week 14 · 系统联调与工程规范 · 全链路集成</p>
+    </header>
+
+    <!-- 系统状态横幅（Week 14 新增：API Key 降级提示） -->
+    <div id="systemBanner" class="system-banner"></div>
+
+    <!-- 搜索栏 -->
+    <div class="search-bar">
+        <input type="text" id="searchInput"
+               placeholder="搜索评论（支持正则，如 差评|投诉、^苹果）...">
+    </div>
+    <div class="search-hint">支持正则表达式 · 如 屏幕|电池|充电（OR）、^苹果（开头）· 400ms 防抖</div>
+
+    <!-- 筛选标签 -->
+    <div class="filter-tags" id="filterTags"></div>
+
+    <!-- 图表区域 -->
+    <div class="dashboard-grid">
+        <div class="chart-card" id="categoryCard">
+            <h2 id="categoryChartTitle">商品品类分布</h2>
+            <div class="chart-toolbar">
+                <button id="drilldownBtn" title="点击后选择品类可下钻查看子维度">🔍 下钻</button>
+            </div>
+            <div class="chart-container" id="categoryChart"></div>
+        </div>
+
+        <div class="chart-card">
+            <h2>各品类情感分布</h2>
+            <div class="chart-container" id="sentimentChart"></div>
+        </div>
+
+        <div class="chart-card">
+            <h2>高频词云</h2>
+            <div class="chart-container" id="wordCloudChart"></div>
+        </div>
+    </div>
+
+    <!-- 评论列表 -->
+    <div class="reviews-section">
+        <h2 id="reviewsTitle">评论列表</h2>
+        <div class="reviews-list" id="reviewsList"></div>
+        <div id="noReviewsMsg">暂无匹配的评论数据</div>
+        <div class="load-more-wrap">
+            <button id="loadMoreBtn" style="display:none;">加载更多...</button>
+        </div>
+    </div>
+
+    <footer>南昌大学 · 大数据分析课程 · 实验十四</footer>
+
+    <script>
+    // ═══════════════════════════════════════════════════════════
+    //  全局状态机
+    // ═══════════════════════════════════════════════════════════
+    const dashboardState = {
+        category: null,      // 选中品类（null = 全部）
+        sentiment: "",       // 选中情感（"" = 全部）
+        searchQuery: "",     // 搜索关键词（支持正则）
+        drilldown: false,    // 是否在下钻模式
+        drilldownCat: null   // 当前下钻的品类
+    };
+
+    let currentAbortController = null;
+
+    // ── 系统状态检测（Week 14 新增）───
+    async function checkSystemStatus() {
+        try {
+            const res = await fetch('/api/system-status');
+            const status = await res.json();
+            const banner = document.getElementById('systemBanner');
+            if (status.degraded) {
+                banner.className = 'system-banner warn show';
+                banner.innerHTML = `<span class="banner-icon">⚠️</span> ${status.degradation_message}`;
+            } else if (status.llm_active) {
+                banner.className = 'system-banner info show';
+                banner.innerHTML = `<span class="banner-icon">✅</span> 系统运行正常 · 数据源: ${status.data_source} (${status.data_rows.toLocaleString()} 条) · 大模型: 已激活`;
+                setTimeout(function() { banner.classList.remove('show'); }, 5000);
+            } else {
+                banner.className = 'system-banner info show';
+                banner.innerHTML = `<span class="banner-icon">ℹ️</span> 数据源: ${status.data_source} (${status.data_rows.toLocaleString()} 条)`;
+                setTimeout(function() { banner.classList.remove('show'); }, 3000);
+            }
+        } catch (err) {
+            console.warn('系统状态检测失败:', err);
+        }
+    }
+
+    function setState(update) {
+        const oldJson = JSON.stringify(dashboardState);
+        Object.assign(dashboardState, update);
+        if (JSON.stringify(dashboardState) !== oldJson) {
+            refreshAll();
+        }
+    }
+
+    function refreshAll() {
+        if (currentAbortController) {
+            currentAbortController.abort();
+        }
+        currentAbortController = new AbortController();
+        const signal = currentAbortController.signal;
+
+        console.log('refreshAll, state:', JSON.stringify(dashboardState));
+
+        if (dashboardState.drilldown && dashboardState.drilldownCat) {
+            updateDrilldownChart(signal);
+        } else {
+            updateCategoryChart(signal);
+        }
+        updateSentimentChart(signal);
+        updateWordCloud(signal);
+        updateReviewList(signal, 0);
+        updateFilterTags();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  工具函数
+    // ═══════════════════════════════════════════════════════════
+    function debounce(fn, delay) {
+        let timer = null;
+        return function (...args) {
+            clearTimeout(timer);
+            timer = setTimeout(() => fn.apply(this, args), delay);
+        };
+    }
+
+    async function fetchJSON(url, signal) {
+        try {
+            const res = await fetch(url, { signal });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return await res.json();
+        } catch (err) {
+            if (err.name === 'AbortError') return null;
+            throw err;
+        }
+    }
+
+    function buildParams(obj) {
+        const parts = [];
+        for (const [k, v] of Object.entries(obj)) {
+            if (v !== null && v !== "" && v !== undefined) {
+                parts.push(`${k}=${encodeURIComponent(v)}`);
+            }
+        }
+        return parts.length ? '?' + parts.join('&') : '';
+    }
+
+    function highlightText(text, query) {
+        if (!query) return escapeHtml(text);
+        try {
+            // 按 | 拆分 OR 条件，逐项高亮
+            const terms = query.split('|').filter(function(t) { return t.length > 0; });
+            if (terms.length === 0) return escapeHtml(text);
+            // 每个 term 中的正则特殊字符转义为普通字符
+            var escapedTerms = terms.map(function(t) {
+                return t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            });
+            var pattern = escapedTerms.join('|');
+            var re = new RegExp('(' + pattern + ')', 'gi');
+            return escapeHtml(text).replace(re, '<mark>$1</mark>');
+        } catch (e) {
+            return escapeHtml(text);
+        }
+    }
+
+    function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  筛选标签
+    // ═══════════════════════════════════════════════════════════
+    function updateFilterTags() {
+        const container = document.getElementById('filterTags');
+        let html = '';
+        if (dashboardState.category) {
+            html += `<span class="filter-tag">品类: ${escapeHtml(dashboardState.category)}
+                <span class="clear" onclick="setState({category:null,drilldown:false,drilldownCat:null})">&times;</span></span>`;
+        }
+        if (dashboardState.sentiment) {
+            html += `<span class="filter-tag">情感: ${escapeHtml(dashboardState.sentiment)}
+                <span class="clear" onclick="setState({sentiment:''})">&times;</span></span>`;
+        }
+        if (dashboardState.searchQuery) {
+            html += `<span class="filter-tag">搜索: ${escapeHtml(dashboardState.searchQuery)}
+                <span class="clear" onclick="document.getElementById('searchInput').value='';setState({searchQuery:''})">&times;</span></span>`;
+        }
+        if (dashboardState.drilldown && dashboardState.drilldownCat) {
+            html += `<span class="filter-tag">下钻: ${escapeHtml(dashboardState.drilldownCat)} → 子维度
+                <span class="clear" onclick="exitDrilldown()">&times;</span></span>`;
+        }
+        container.innerHTML = html;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  Chart 实例缓存
+    // ═══════════════════════════════════════════════════════════
+    let categoryChart = null;
+    let sentimentChart = null;
+    let wordCloudChart = null;
+
+    function getChart(domId) {
+        const dom = document.getElementById(domId);
+        if (domId === 'categoryChart') {
+            if (!categoryChart) categoryChart = echarts.init(dom);
+            return categoryChart;
+        }
+        if (domId === 'sentimentChart') {
+            if (!sentimentChart) sentimentChart = echarts.init(dom);
+            return sentimentChart;
+        }
+        if (domId === 'wordCloudChart') {
+            if (!wordCloudChart) wordCloudChart = echarts.init(dom);
+            return wordCloudChart;
+        }
+    }
+
+    window.addEventListener('resize', () => {
+        categoryChart && categoryChart.resize();
+        sentimentChart && sentimentChart.resize();
+        wordCloudChart && wordCloudChart.resize();
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    //  品类分布柱状图 + 下钻
+    // ═══════════════════════════════════════════════════════════
+    function updateCategoryChart(signal) {
+        const chart = getChart('categoryChart');
+        const params = buildParams({ sentiment: dashboardState.sentiment });
+        const titleEl = document.getElementById('categoryChartTitle');
+
+        fetchJSON(`/api/category-distribution${params}`, signal).then(data => {
+            if (!data) return;
+            titleEl.textContent = '商品品类分布';
+            chart.off('click');
+            chart.setOption({
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: { type: 'shadow' },
+                    formatter: function(p) {
+                        return `<b>${p[0].name}</b><br/>评论数: ${p[0].value}`;
+                    }
+                },
+                grid: { left: '3%', right: '8%', bottom: '15%', containLabel: true },
+                xAxis: {
+                    type: 'category', data: data.categories,
+                    axisLabel: { color: '#ccc', rotate: 30, fontSize: 11 },
+                    axisLine: { lineStyle: { color: '#444' } }
+                },
+                yAxis: {
+                    type: 'value',
+                    axisLabel: { color: '#ccc' },
+                    splitLine: { lineStyle: { color: '#333' } }
+                },
+                series: [{
+                    type: 'bar', data: data.counts,
+                    itemStyle: {
+                        borderRadius: [6, 6, 0, 0],
+                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                            { offset: 0, color: '#7c4dff' },
+                            { offset: 1, color: '#448aff' }
+                        ])
+                    },
+                    emphasis: {
+                        itemStyle: {
+                            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                { offset: 0, color: '#b388ff' },
+                                { offset: 1, color: '#83b9ff' }
+                            ])
+                        }
+                    }
+                }]
+            }, true);
+
+            chart.on('click', function(params) {
+                if (params.componentType !== 'series') return;
+                if (dashboardState.drilldown) {
+                    setState({ drilldownCat: params.name, category: params.name });
+                } else {
+                    if (dashboardState.category === params.name) {
+                        setState({ category: null });
+                    } else {
+                        setState({ category: params.name });
+                    }
+                }
+            });
+        }).catch(err => {
+            console.error('品类分布加载失败:', err);
+        });
+    }
+
+    function updateDrilldownChart(signal) {
+        const chart = getChart('categoryChart');
+        const cat = dashboardState.drilldownCat;
+        const params = buildParams({
+            cat: cat,
+            sentiment: dashboardState.sentiment,
+            query: dashboardState.searchQuery
+        });
+        const titleEl = document.getElementById('categoryChartTitle');
+        titleEl.textContent = `${cat} · 子维度分布`;
+
+        fetchJSON(`/api/sub-category-stats${params}`, signal).then(data => {
+            if (!data) return;
+            chart.off('click');
+            chart.setOption({
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: { type: 'shadow' }
+                },
+                grid: { left: '3%', right: '8%', bottom: '15%', containLabel: true },
+                xAxis: {
+                    type: 'category', data: data.sub_categories,
+                    axisLabel: { color: '#ccc', fontSize: 12 },
+                    axisLine: { lineStyle: { color: '#444' } }
+                },
+                yAxis: {
+                    type: 'value',
+                    axisLabel: { color: '#ccc' },
+                    splitLine: { lineStyle: { color: '#333' } }
+                },
+                series: [{
+                    type: 'bar', data: data.counts,
+                    universalTransition: { enabled: true },
+                    itemStyle: {
+                        borderRadius: [6, 6, 0, 0],
+                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                            { offset: 0, color: '#ff6e40' },
+                            { offset: 1, color: '#ff9100' }
+                        ])
+                    },
+                    emphasis: {
+                        itemStyle: {
+                            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                { offset: 0, color: '#ff9e80' },
+                                { offset: 1, color: '#ffb74d' }
+                            ])
+                        }
+                    }
+                }]
+            }, true);
+
+            chart.on('click', function(params) {
+                if (params.componentType !== 'series') return;
+                const subCat = params.name;
+                const keywords = {
+                    "物流": "快递|发货|物流|送货|配送",
+                    "质量": "质量|坏了|差劲|结实|耐用",
+                    "价格": "价格|便宜|贵|划算|性价比",
+                    "服务": "服务|客服|态度|售后|退换",
+                    "包装": "包装|包裹|破损|损坏",
+                    "描述": "描述|相符|不符|色差|尺寸",
+                    "使用体验": "使用|体验|效果|功能|方便"
+                };
+                const keyword = keywords[subCat] || subCat;
+                const newQuery = dashboardState.searchQuery
+                    ? `${dashboardState.searchQuery}|${keyword}`
+                    : keyword;
+                document.getElementById('searchInput').value = newQuery;
+                setState({ searchQuery: newQuery });
+            });
+        }).catch(err => {
+            console.error('下钻数据加载失败:', err);
+        });
+    }
+
+    function exitDrilldown() {
+        setState({ drilldown: false, drilldownCat: null });
+        document.getElementById('drilldownBtn').classList.remove('active');
+    }
+
+    // ── 下钻按钮 ──
+    document.getElementById('drilldownBtn').addEventListener('click', function() {
+        const btn = this;
+        dashboardState.drilldown = !dashboardState.drilldown;
+        if (dashboardState.drilldown) {
+            btn.classList.add('active');
+            btn.textContent = '🔍 下钻中...（点击柱子）';
+        } else {
+            btn.classList.remove('active');
+            btn.textContent = '🔍 下钻';
+            setState({ drilldown: false, drilldownCat: null });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    //  情感分布堆叠柱状图
+    // ═══════════════════════════════════════════════════════════
+    function updateSentimentChart(signal) {
+        const chart = getChart('sentimentChart');
+        const params = buildParams({
+            cat: dashboardState.category,
+            query: dashboardState.searchQuery
+        });
+
+        fetchJSON(`/api/sentiment-overview${params}`, signal).then(result => {
+            if (!result) return;
+            const data = result.data;
+            const categories = data.map(d => d.category);
+            const sentimentKeys = ['正面', '负面', '中性'];
+            const colorMap = { '正面': '#4caf50', '负面': '#f44336', '中性': '#ff9800' };
+
+            const series = sentimentKeys.map(key => ({
+                name: key,
+                type: 'bar',
+                stack: 'total',
+                emphasis: { focus: 'series' },
+                itemStyle: { color: colorMap[key] },
+                data: data.map(d => d[key] || 0)
+            }));
+
+            chart.off('click');
+            chart.setOption({
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: { type: 'shadow' },
+                    formatter: function(params) {
+                        let html = '<b>' + params[0].axisValue + '</b><br/>';
+                        let total = 0;
+                        params.forEach(p => { total += p.value; });
+                        params.forEach(p => {
+                            const pct = total > 0 ? ((p.value / total) * 100).toFixed(1) : 0;
+                            html += p.marker + ' ' + p.seriesName + ': ' + p.value + ' (' + pct + '%)<br/>';
+                        });
+                        return html;
+                    }
+                },
+                legend: {
+                    data: sentimentKeys,
+                    textStyle: { color: '#ccc' },
+                    top: 5
+                },
+                grid: { left: '3%', right: '4%', bottom: '15%', top: '15%', containLabel: true },
+                xAxis: {
+                    type: 'category', data: categories,
+                    axisLabel: { color: '#ccc', rotate: 30, fontSize: 11 },
+                    axisLine: { lineStyle: { color: '#444' } }
+                },
+                yAxis: {
+                    type: 'value',
+                    axisLabel: { color: '#ccc' },
+                    splitLine: { lineStyle: { color: '#333' } }
+                },
+                series: series
+            }, true);
+
+            chart.on('click', function(params) {
+                if (params.componentType !== 'series') return;
+                const clickedSentiment = params.seriesName;
+                if (dashboardState.sentiment === clickedSentiment) {
+                    setState({ sentiment: "" });
+                } else {
+                    setState({ sentiment: clickedSentiment });
+                }
+            });
+        }).catch(err => {
+            console.error('情感分布加载失败:', err);
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  词云图
+    // ═══════════════════════════════════════════════════════════
+    function updateWordCloud(signal) {
+        const chart = getChart('wordCloudChart');
+        const params = buildParams({
+            cat: dashboardState.category,
+            sentiment: dashboardState.sentiment,
+            query: dashboardState.searchQuery,
+            top_n: 100
+        });
+
+        fetchJSON(`/api/word-frequency${params}`, signal).then(result => {
+            if (!result) return;
+            const words = result.data;
+            if (!words || words.length === 0) {
+                chart.setOption({
+                    title: { text: '暂无词云数据', left: 'center', top: 'center',
+                        textStyle: { color: '#888', fontSize: 14 } }
+                }, true);
+                return;
+            }
+
+            const maxVal = words[0].value;
+            chart.off('click');
+            chart.setOption({
+                tooltip: {
+                    show: true,
+                    formatter: function(p) {
+                        return `<b>${p.name}</b><br/>出现次数: ${p.value}`;
+                    }
+                },
+                series: [{
+                    type: 'wordCloud',
+                    shape: 'circle',
+                    sizeRange: [14, 60],
+                    rotationRange: [-45, 45],
+                    rotationStep: 15,
+                    gridSize: 8,
+                    drawOutOfBound: false,
+                    layoutAnimation: true,
+                    textStyle: {
+                        fontFamily: 'Microsoft YaHei, sans-serif',
+                        fontWeight: 'normal',
+                        color: function() {
+                            const colors = ['#7c4dff', '#448aff', '#4caf50', '#ff9800',
+                                            '#f44336', '#00bcd4', '#e91e63', '#9c27b0',
+                                            '#ff5722', '#8bc34a', '#03a9f4', '#ffc107'];
+                            return colors[Math.floor(Math.random() * colors.length)];
+                        }
+                    },
+                    emphasis: {
+                        focus: 'self',
+                        textStyle: {
+                            textShadowBlur: 10,
+                            textShadowColor: '#333',
+                            fontWeight: 'bolder'
+                        }
+                    },
+                    data: words
+                }]
+            });
+
+            chart.on('click', function(params) {
+                if (!params.name) return;
+                const newQuery = dashboardState.searchQuery
+                    ? `${dashboardState.searchQuery} ${params.name}`
+                    : params.name;
+                document.getElementById('searchInput').value = newQuery;
+                setState({ searchQuery: newQuery });
+            });
+        }).catch(err => {
+            console.error('词云加载失败:', err);
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  评论列表（分页）
+    // ═══════════════════════════════════════════════════════════
+    let reviewsOffset = 0;
+    let reviewsTotal = 0;
+    const REVIEWS_LIMIT = 20;
+
+    function updateReviewList(signal, offset) {
+        reviewsOffset = offset;
+        const params = buildParams({
+            cat: dashboardState.category,
+            sentiment: dashboardState.sentiment,
+            query: dashboardState.searchQuery,
+            offset: offset,
+            limit: REVIEWS_LIMIT
+        });
+
+        fetchJSON(`/api/reviews${params}`, signal).then(result => {
+            if (!result) return;
+            reviewsTotal = result.total;
+
+            const listEl = document.getElementById('reviewsList');
+            const loadMoreBtn = document.getElementById('loadMoreBtn');
+            const noMsg = document.getElementById('noReviewsMsg');
+            const titleEl = document.getElementById('reviewsTitle');
+
+            titleEl.textContent = `评论列表（共 ${result.total} 条）`;
+
+            if (offset === 0) {
+                listEl.innerHTML = '';
+            }
+
+            if (result.data.length === 0 && offset === 0) {
+                noMsg.style.display = 'block';
+                loadMoreBtn.style.display = 'none';
+            } else {
+                noMsg.style.display = 'none';
+            }
+
+            const query = dashboardState.searchQuery;
+            result.data.forEach(r => {
+                const card = document.createElement('div');
+                card.className = 'review-card';
+                const sentBadge = r.sentiment === '正面'
+                    ? '<span class="badge badge-pos">正面</span>'
+                    : '<span class="badge badge-neg">负面</span>';
+                card.innerHTML = `
+                    <div class="meta">
+                        <span class="badge badge-cat">${escapeHtml(r.cat)}</span>
+                        ${sentBadge}
+                    </div>
+                    <div class="review-text">${highlightText(r.review, query)}</div>`;
+                listEl.appendChild(card);
+            });
+
+            // "加载更多" 按钮
+            const loaded = offset + result.data.length;
+            if (loaded < result.total) {
+                loadMoreBtn.style.display = 'inline-block';
+                loadMoreBtn.textContent = `加载更多...（已显示 ${loaded} / ${result.total}）`;
+                loadMoreBtn.disabled = false;
+            } else if (result.total > 0 && offset > 0) {
+                loadMoreBtn.style.display = 'inline-block';
+                loadMoreBtn.textContent = `已加载全部（共 ${result.total} 条）`;
+                loadMoreBtn.disabled = true;
+            } else if (result.total <= REVIEWS_LIMIT) {
+                loadMoreBtn.style.display = 'none';
+            }
+        }).catch(err => {
+            console.error('评论列表加载失败:', err);
+        });
+    }
+
+    document.getElementById('loadMoreBtn').addEventListener('click', function() {
+        updateReviewList(currentAbortController ? currentAbortController.signal : null,
+                         reviewsOffset + REVIEWS_LIMIT);
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    //  搜索框（防抖 400ms）
+    // ═══════════════════════════════════════════════════════════
+    const debouncedSearch = debounce(function(value) {
+        setState({ searchQuery: value });
+    }, 400);
+
+    document.getElementById('searchInput').addEventListener('input', function(e) {
+        debouncedSearch(e.target.value);
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    //  初始加载
+    // ═══════════════════════════════════════════════════════════
+    checkSystemStatus();
+    refreshAll();
+    </script>
+</body>
+</html>

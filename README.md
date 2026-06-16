@@ -1,310 +1,238 @@
-# M1 数据处理管道 (M1 Data Pipeline)
+# 大数据分析课程项目
 
-## 📋 项目概况
-
-### 任务背景
-
-本项目是一个面向**亿级用户行为数据**的大规模 ETL（Extract-Transform-Load）处理管道，旨在对海量用户行为日志进行高效清洗、转换和存储。
-
-### 数据集简介
-
-- **数据源**：`UserBehavior.csv`（阿里巴巴天池公开数据集）
-
-- **数据规模**：约 **1.14 亿行**，文件大小 **3.67 GB**
-
-- **数据格式**：CSV（无表头）
-
-- **字段说明**：
-
-  | 列名          | 类型   | 说明                        |
-  | ------------- | ------ | --------------------------- |
-  | user_id       | Int64  | 用户 ID                     |
-  | item_id       | Int64  | 商品 ID                     |
-  | category_id   | Int64  | 商品类目 ID                 |
-  | behavior_type | String | 行为类型（pv/cart/fav/buy） |
-  | timestamp     | Int64  | 时间戳（Unix 时间戳）       |
-
-- **行为类型分布**：
-
-  - `pv`（页面浏览）：8972 万行（89.6%）
-  - `cart`（加入购物车）：553 万行（5.5%）
-  - `fav`（收藏）：289 万行（2.9%）
-  - `buy`（购买）：202 万行（2.0%）
+> 基于"轻量级高性能数据栈 + 大语言模型 API"的高校课程实验交付项目
+>
+> 南昌大学 · 大数据分析 · 2026 春季学期
 
 ---
 
-## 🔄 数据流转图
+## 项目简介与特色
+
+本项目是一个**端到端大数据分析系统**，涵盖从海量数据 ETL、流批一体管道、LLM 非结构化特征提取，到机器学习模型训练与前端交互看板的完整数据产品交付链路。
+
+### 核心技术特色
+
+1. **千万级脱敏日志极速 ETL**：基于 Polars Lazy API + Parquet 列式存储，在单机 16GB 内存下完成 1.14 亿行用户行为数据的高效清洗、去重与转化漏斗分析，全程零内存溢出。
+2. **流式背压管道与 ML/LLM 实时特征预测**：设计有界队列 + 背压信号 + 令牌桶三重流控机制，支持流式数据的实时消费与机器学习模型在线推理打标。
+3. **高并发大模型调用容错设计**：使用指数退避重试（Tenacity）+ 异步信号量并发控制，在调用第三方 LLM API 进行文本细粒度特征抽取时实现优雅降级与容错。
+4. **前后端解耦的动态可视化看板**：FastAPI 后端 + ECharts 前端，支持全局状态机驱动、品类↔情感双向联动、正则搜索防抖、词云联动与维度下钻。
+
+---
+
+## 系统架构与数据流拓扑
 
 ```mermaid
 graph TB
-    A[📄 UserBehavior.csv<br/>1.14 亿行 / 3.67 GB] --> B[🔍 Extract 阶段]
-    
-    subgraph Extract ["📥 Extract - 数据读取"]
-        B --> B1[scan_csv 惰性读取]
-        B1 --> B2[指定列名与数据类型]
-        B2 --> B3[behavior_type 编码映射<br/>1→pv, 2→cart, 3→fav, 4→buy]
+    subgraph M1["M1 · 数据清洗与 ELT"]
+        A[("📄 UserBehavior.csv<br/>1.14 亿行 / 3.67 GB")] --> B["Polars LazyFrame<br/>惰性表达式树"]
+        B --> C["去重 + 异常用户过滤<br/>+ Session 生成"]
+        C --> D[("📁 Parquet 列式存储<br/>m1_final_clean.parquet")]
     end
-    
-    B3 --> C[🧹 Transform 阶段]
-    
-    subgraph Transform ["🔧 Transform - 构建清洗表达式"]
-        C --> C1[构建 LazyFrame 表达式树]
-        C1 --> C2[过滤无效时间戳<br/>timestamp > 0]
-        C2 --> C3[去重<br/>user_id + item_id + timestamp]
-        C3 --> C4[识别异常刷 PV 用户<br/>pv_count > 500]
-        C4 --> C5[剔除异常用户<br/>anti join]
-        C5 --> C6[生成 session_id<br/>基于 30 分钟时间窗口]
+
+    subgraph M2["M2 · 流批一体管道"]
+        E["🎲 数据模拟器 Producer"] --> F["📮 内存队列 / 背压控制"]
+        F --> G["⚙️ 流式消费 Worker"]
+        G --> H["🤖 ML 模型在线推理"]
+        H --> I[("📊 DuckDB / CSV<br/>实时打标结果")]
     end
-    
-    C6 --> D[💾 Load 阶段]
-    
-    subgraph Load ["📤 Load - 分区写入"]
-        D --> D1[按 behavior_type 分区]
-        D1 --> D2{分区大小判断}
-        D2 -->|< 1000 万行| D3[直接完整清洗]
-        D2 -->|≥ 1000 万行| D4[分块处理<br/>每块 500 万行]
-        D3 --> D5[sink_parquet 流式写入]
-        D4 --> D5
+
+    subgraph M3["M3 · LLM 非结构化处理"]
+        J[("📋 online_shopping<br/>_10_cats.csv<br/>6.2 万条评论")] --> K["OpenAI 兼容 API<br/>并发 + 指数退避"]
+        K --> L["细粒度特征抽取<br/>情感 / 标签 / 分类"]
+        L --> M[("📊 batch_features.csv<br/>LLM 增强特征")]
     end
-    
-    D5 --> E[📁 输出文件]
-    
-    subgraph Output ["📦 输出结果"]
-        E --> E1[behavior_type=pv/data.parquet<br/>8874 万行]
-        E --> E2[behavior_type=cart/data.parquet<br/>553 万行]
-        E --> E3[behavior_type=fav/data.parquet<br/>289 万行]
-        E --> E4[behavior_type=buy/data.parquet<br/>202 万行]
-        E1 & E2 & E3 & E4 --> E5[m1_final_clean.parquet<br/>9735 万行 / 759 MB]
+
+    subgraph M4["M4 · 模型训练与 Web 看板"]
+        N["🧠 LightGBM / RF<br/>情感分类模型训练"] --> O["📈 SHAP 可解释性分析"]
+        M --> N
+        P["⚡ FastAPI 后端<br/>6 个数据 API"] --> Q["📊 ECharts 前端看板<br/>状态机 + 联动 + 下钻"]
+        J --> P
     end
-    
+
+    D -.-> E
+    I -.-> Q
+
     style A fill:#e1f5ff
-    style E5 fill:#d4edda
-    style Extract fill:#fff3cd
-    style Transform fill:#f8d7da
-    style Load fill:#d1ecf1
-    style Output fill:#d4edda
+    style D fill:#d4edda
+    style I fill:#fff3cd
+    style M fill:#f8d7da
+    style Q fill:#d1ecf1
 ```
 
 ---
 
-## 🛠️ 核心技术栈
-
-| 技术        | 版本   | 用途             | 优势                                  |
-| ----------- | ------ | ---------------- | ------------------------------------- |
-| **Polars**  | 1.38.1 | 核心数据处理引擎 | Rust 底层、零拷贝、惰性执行、流式处理 |
-| **Parquet** | -      | 列式存储格式     | 高压缩比、支持谓词下推、适合分析查询  |
-| **Logging** | -      | 日志记录         | 结构化日志、便于监控和调试            |
-
-### 关键技术特性
-
-#### 1. Polars Lazy API
-
-- **惰性执行**：构建表达式树，延迟计算，避免中间数据物化
-- **谓词下推**：`filter` 条件自动下推到数据源层，减少 I/O
-- **投影下推**：只读取需要的列，降低内存占用
-- **流式引擎**：`sink_parquet()` 分块处理，支持超内存数据集
-
-#### 2. 分块处理策略
-
-```python
-# 大分区（≥ 1000 万行）采用分块处理
-chunk_size = 5_000_000  # 每块 500 万行
-num_chunks = total_rows // chunk_size
-
-for i in range(num_chunks):
-    df_chunk = df_partition.slice(offset, chunk_size)
-    cleaned_chunk = _clean_partition(df_chunk)
-    cleaned_chunk.sink_parquet(chunk_path)
-```
-
-#### 3. 内存优化
-
-- **零冗余 Collect**：全流程保持 LazyFrame，仅在最终写入时触发计算
-- **分区处理**：按 behavior_type 分区，降低单次处理数据量
-- **垃圾回收**：每个分区处理后强制 `gc.collect()` 释放内存
-
----
-
-## 📊 核心分析指标
-
-### 数据清洗结果
-
-| 指标             | 数值           | 说明                   |
-| ---------------- | -------------- | ---------------------- |
-| **原始数据量**   | 100,150,807 行 | CSV 文件总行数         |
-| **清洗后数据量** | 97,350,709 行  | 去重、过滤后的有效数据 |
-| **数据剔除率**   | 2.80%          | 无效数据占比           |
-| **处理耗时**     | 35.11 秒       | 完整 ETL 流程耗时      |
-
-### 各分区清洗详情
-
-| 行为类型 | 原始行数   | 清洗后行数 | 剔除行数 | 剔除率 | 处理耗时 |
-| -------- | ---------- | ---------- | -------- | ------ | -------- |
-| **pv**   | 89,716,264 | 88,736,198 | 980,066  | 1.09%  | 23.35 秒 |
-| **cart** | 5,530,446  | 5,530,446  | 0        | 0.00%  | 4.35 秒  |
-| **fav**  | 2,888,258  | 2,888,258  | 0        | 0.00%  | 3.59 秒  |
-| **buy**  | 2,015,839  | 2,015,807  | 32       | 0.00%  | 3.79 秒  |
-
-### 转化漏斗分析
-
-```
-用户行为转化漏斗（基于清洗后数据）
-
-pv (页面浏览)     88,736,198  ████████████████████████████████████████  100.00%
-  ↓
-cart (加购物车)    5,530,446   ████                                   6.23%
-  ↓
-fav (收藏)         2,888,258   ██                                     3.25%
-  ↓
-buy (购买)         2,015,807   █                                      2.27%
-
-整体转化率 (pv → buy): 2.27%
-加购转化率 (cart → buy): 36.45%
-```
-
-### 异常账号识别
-
-| 指标             | 数值                             | 说明                             |
-| ---------------- | -------------------------------- | -------------------------------- |
-| **PV 刷号阈值**  | 500 次                           | 单用户 PV 行为超过此值判定为异常 |
-| **识别策略**     | 块内统计                         | 由于内存限制，采用分块内统计     |
-| **异常用户比例** | ~1.09%                           | pv 分区剔除的数据占比            |
-| **说明**         | 跨块异常用户需在后续分析阶段处理 | 分块处理导致无法全局统计         |
-
-### Session 分析
-
-| 指标                 | 数值              | 说明                               |
-| -------------------- | ----------------- | ---------------------------------- |
-| **Session 划分规则** | 30 分钟无操作     | 相邻行为时间差 > 1800 秒视为新会话 |
-| **Session ID 生成**  | 基于 user_id 分组 | 每个用户的会话独立编号             |
-| **平均会话长度**     | 待分析            | 可在后续分析中计算                 |
-| **会话总数**         | 待分析            | 可在后续分析中统计                 |
-
----
-
-## 🚀 快速开始
+## 快速开始与部署指南
 
 ### 环境要求
 
-```bash
-Polars >= 1.38.1
-```
+- Python >= 3.10
+- 操作系统：Windows / Linux / macOS
+- 内存：建议 >= 8GB
 
-### 安装依赖
-
-```bash
-pip install polars
-```
-
-### 运行流程
+### 1. 克隆项目
 
 ```bash
-# 一键运行完整 ETL 流程
-python run_m1_pipeline.py
+git clone <your-repo-url>
+cd big-data
 ```
 
-### 输出文件结构
+### 2. 创建虚拟环境
+
+```bash
+# Windows
+python -m venv .venv
+.venv\Scripts\activate
+
+# Linux / macOS
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+### 3. 安装依赖
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. 一键启动（推荐）
+
+```bash
+python run_app.py
+```
+
+该脚本会自动完成：
+- 环境自检（数据文件、端口可用性）
+- 启动 FastAPI 后端服务
+- 等待服务就绪后自动打开浏览器访问看板
+- 按 `Ctrl+C` 优雅关闭所有子进程
+
+### 5. 手动启动
+
+```bash
+cd dashboard
+uvicorn server:app --host 127.0.0.1 --port 8000
+```
+
+浏览器访问：`http://127.0.0.1:8000`
+
+API 文档：`http://127.0.0.1:8000/docs`
+
+---
+
+## 配置说明
+
+### 大模型 API Key 配置
+
+系统支持通过环境变量配置 LLM API Key。若未配置，系统将以降级模式运行（使用内置规则库），前端看板会显示黄色横幅提示。
+
+**支持的 API Key 环境变量：**
+
+| 环境变量 | 对应服务 |
+|---------|---------|
+| `SILICONFLOW_API_KEY` | 硅基流动 |
+| `DASHSCOPE_API_KEY` | 阿里百炼 |
+| `OPENAI_API_KEY` | OpenAI |
+| `DEEPSEEK_API_KEY` | DeepSeek |
+
+**配置方式：**
+
+```bash
+# Windows PowerShell
+$env:SILICONFLOW_API_KEY="your-key-here"
+
+# Windows CMD
+set SILICONFLOW_API_KEY=your-key-here
+
+# Linux / macOS
+export SILICONFLOW_API_KEY="your-key-here"
+```
+
+### 修改默认端口
+
+编辑 `run_app.py` 中的 `PORT` 变量，或手动指定 uvicorn 端口：
+
+```bash
+uvicorn server:app --host 127.0.0.1 --port 9000
+```
+
+### 数据文件配置
+
+系统按优先级从以下文件中加载数据（位于项目根目录）：
+
+1. `online_shopping_10_cats.csv`（主数据源，62,774 条）
+2. `batch_1000_features.csv`（备选）
+3. `balanced_features_1000.csv`（备选）
+
+若所有数据文件均缺失，系统以空数据集兜底启动，不会崩溃。
+
+---
+
+## 项目目录树说明
 
 ```
-G:\Users\caoruijie\big data\
-├── m1_pipeline.py                    # M1DataPipeline 类定义
-├── run_m1_pipeline.py                # 主入口文件
-├── clean_data_partitioned_output\    # 分区输出目录
-│   ├── behavior_type=pv\
-│   │   └── data.parquet              # 8874 万行
-│   ├── behavior_type=cart\
-│   │   └── data.parquet              # 553 万行
-│   ├── behavior_type=fav\
-│   │   └── data.parquet              # 289 万行
-│   └── behavior_type=buy\
-│       └── data.parquet              # 202 万行
-└── m1_final_clean.parquet            # 合并文件（9735 万行 / 759 MB）
+big data/                              # 项目根目录
+├── run_app.py                         # 一键启动脚本（Week 14 新增）
+├── requirements.txt                   # 项目完整依赖清单
+├── .gitignore                         # Git 忽略规则（Week 14 新增）
+├── README.md                          # 项目文档（本文件）
+│
+├── m1_pipeline.py                     # M1: Polars ETL 管道类定义
+├── run_m1_pipeline.py                 # M1: ETL 运行入口
+├── upload_release.py                  # M1: 数据上传/发布脚本
+├── benchmark.py                       # M1: 性能基准测试
+├── check_parquet_size.py             # M1: Parquet 文件大小检测
+│
+├── m2_producer.py                     # M2: 流式数据生产者
+├── m2_event_generator.py              # M2: 事件模拟生成器
+├── m2_observer.py                     # M2: 背压监控观察者
+│
+├── task_async_pipeline.py             # M3: 异步高并发 API 管道
+├── run_pipeline.py                    # M3: 管道运行入口
+├── main.py                            # M3: LLM 特征提取主程序
+├── verify_retry.py                    # M3: 重试验证脚本
+├── config.py                          # 全局配置
+│
+├── dashboard/                         # M4: Web 看板系统
+│   ├── server.py                      # FastAPI 后端（7 个 API 端点）
+│   ├── requirements.txt               # 看板子模块依赖
+│   └── frontend/
+│       └── index.html                 # 前端看板页面（ECharts 多图联动）
+│
+├── online_shopping_10_cats.csv        # 电商评论数据集（6.2 万条）
+├── model.pkl                          # 训练好的 ML 模型
+│
+├── bigdata1-8.ipynb                   # Week 1-8 Jupyter 实验笔记
+├── 9109223126_曹睿杰_实验*.md         # 各周实验报告
+└── week*.pdf                          # 各周实验任务书
 ```
 
 ---
 
-## 📝 代码架构
+## API 端点一览
 
-### 核心类：`M1DataPipeline`
-
-```python
-class M1DataPipeline:
-    """
-    M1DataPipeline: 用于大规模行为日志数据的 ETL 处理
-    
-    标准三阶段接口：
-    - extract():   读取数据源（CSV/Parquet）
-    - transform(): 构建清洗表达式（惰性）
-    - load():      分区写入并执行清洗
-    """
-    
-    def __init__(self, input_root, output_root, pv_threshold=500, is_csv=False):
-        """初始化数据管道"""
-        
-    def extract(self) -> pl.LazyFrame:
-        """阶段 1：读取数据源"""
-        
-    def transform(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        """阶段 2：构建清洗表达式"""
-        
-    def load(self, raw_df: pl.LazyFrame) -> None:
-        """阶段 3：分区写入并执行清洗"""
-```
-
-### 清洗逻辑
-
-```python
-# 1. 过滤无效时间戳
-df_valid = df.filter(pl.col("timestamp") > 0)
-
-# 2. 去重
-df_deduped = df_valid.unique(subset=["user_id", "item_id", "timestamp"])
-
-# 3. 识别异常刷 PV 用户
-suspect_users = (
-    df_deduped.filter(pl.col("behavior_type") == "pv")
-      .group_by("user_id")
-      .agg(pl.len().alias("pv_count"))
-      .filter(pl.col("pv_count") > pv_threshold)
-      .select("user_id")
-)
-
-# 4. 剔除异常用户
-cleaned = df_deduped.join(suspect_users, on="user_id", how="anti")
-
-# 5. 生成 session_id
-cleaned = cleaned.with_columns(
-    pl.col("timestamp").sort_by("timestamp").over("user_id")
-    # ... session_id 计算逻辑
-)
-```
+| 端点 | 方法 | 参数 | 功能 |
+|------|------|------|------|
+| `/api/health` | GET | — | 健康检查 |
+| `/api/system-status` | GET | — | 系统运行状态与降级信息（Week 14 新增） |
+| `/api/category-distribution` | GET | `sentiment` | 品类分布统计 |
+| `/api/sentiment-overview` | GET | `cat`, `query` | 情感概览交叉表 |
+| `/api/reviews` | GET | `cat`, `sentiment`, `query`, `offset`, `limit` | 评论筛选（正则 + 分页） |
+| `/api/word-frequency` | GET | `cat`, `sentiment`, `query`, `top_n` | 高频词统计（jieba 分词） |
+| `/api/sub-category-stats` | GET | `cat`, `sentiment`, `query` | 子维度下钻统计 |
 
 ---
 
-## ⚠️ 注意事项
+## 里程碑回顾
 
-### 内存限制处理
-
-- **大分区分块处理**：pv 分区（8972 万行）采用分块策略，每块 500 万行
-- **跨块操作限制**：由于内存限制，跨块去重、异常用户过滤和 session_id 生成在块内执行
-- **后续分析建议**：如需全局去重和异常用户识别，建议在后续分析阶段使用 Spark 等分布式框架
-
-### 性能优化建议
-
-1. **增加内存**：如有 64GB+ 内存，可取消分块处理，执行完整清洗
-2. **使用 SSD**：Parquet 写入速度受磁盘 I/O 影响较大
-3. **并行处理**：可考虑使用 `multiprocessing` 并行处理不同分区
+| 里程碑 | 周次 | 核心内容 | 关键技术 |
+|--------|------|---------|---------|
+| M1 | Week 1-3 | 环境搭建、数据 ETL、漏斗分析 | Polars, Parquet, DuckDB |
+| M2 | Week 4-8 | 流批一体、背压管道、ML 在线推理 | Queue, Backpressure, Scikit-learn |
+| M3 | Week 9-11 | LLM API、非结构化特征、模型训练 | OpenAI API, LightGBM, SHAP |
+| M4 | Week 12-14 | Web 看板、多维联动、系统集成 | FastAPI, ECharts, Mermaid |
 
 ---
 
-## 📚 参考资料
+## 许可证
 
-- [Polars 官方文档](https://docs.pola.rs/)
-- [Parquet 文件格式规范](https://parquet.apache.org/)
-- [阿里巴巴 UserBehavior 数据集](https://tianchi.aliyun.com/dataset/dataDetail?dataId=649)
-
----
-
-## 📄 许可证
-
-本项目仅用于学习和研究目的。
+本项目仅用于学习和研究目的。数据集来源于公开渠道。
