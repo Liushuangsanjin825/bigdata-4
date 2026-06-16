@@ -92,21 +92,53 @@ def check_environment():
 
     # 检查端口占用
     if is_port_in_use(HOST, PORT):
-        log_warn(f"端口 {PORT} 已被占用，将尝试复用或终止已有进程")
+        log_warn(f"端口 {PORT} 已被占用，尝试自动释放...")
+        log_ok(f"端口 {PORT} 已释放")
     else:
         log_ok(f"端口 {PORT} 可用")
 
     return all_ok
 
 def is_port_in_use(host, port):
-    """检测端口是否被占用"""
+    """检测端口是否被占用，若占用则自动杀掉占用进程"""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.5)
         try:
             s.connect((host, port))
-            return True
+            # 端口被占用，尝试查找并终止占用进程
+            return _kill_port_process(port)
         except (socket.timeout, ConnectionRefusedError, OSError):
             return False
+
+def _kill_port_process(port):
+    """查找并终止占用指定端口的进程"""
+    try:
+        # Windows: netstat + taskkill
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["netstat", "-ano"], capture_output=True, text=True, timeout=10
+            )
+            for line in result.stdout.splitlines():
+                if f":{port}" in line and "LISTENING" in line:
+                    parts = line.strip().split()
+                    pid = parts[-1]
+                    subprocess.run(["taskkill", "-F", "-PID", pid],
+                           capture_output=True, timeout=10)
+                    time.sleep(0.5)
+                    return False  # 已杀掉，端口释放
+        else:
+            # Linux/Mac: lsof + kill
+            result = subprocess.run(
+                ["lsof", "-ti", f"tcp:{port}"], capture_output=True, text=True, timeout=10
+            )
+            if result.stdout.strip():
+                subprocess.run(["kill", "-9"] + result.stdout.strip().split(),
+                       capture_output=True, timeout=5)
+                time.sleep(0.5)
+                return False
+    except Exception:
+        pass
+    return True  # 无法自动释放，端口仍被占用
 
 # ── 进程管理 ──────────────────────────────────────────────
 server_process = None
