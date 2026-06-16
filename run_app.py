@@ -119,7 +119,9 @@ def start_server():
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        bufsize=1
+        bufsize=1,
+        encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"}
     )
     log_ok(f"uvicorn 子进程已创建 (PID: {server_process.pid})")
 

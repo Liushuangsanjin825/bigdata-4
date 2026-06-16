@@ -12,7 +12,10 @@ from collections import Counter
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S"
+    datefmt="%H:%M:%S",
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
 )
 logger = logging.getLogger("dashboard")
 
@@ -42,18 +45,19 @@ for key_name in LLM_API_KEYS:
         break
 
 if not _llm_configured:
-    logger.warning("⚠️  未检测到任何大模型 API Key 环境变量 (%s)", ", ".join(LLM_API_KEYS))
-    logger.warning("⚠️  系统将以降级模式运行：LLM 功能不可用，使用内置规则库替代")
-    logger.warning("⚠️  如需启用完整 LLM 功能，请设置环境变量，例如：")
-    logger.warning("⚠️    Windows: set SILICONFLOW_API_KEY=your-key-here")
-    logger.warning("⚠️    Linux/Mac: export SILICONFLOW_API_KEY=your-key-here")
+    logger.warning("[WARN] 未检测到任何大模型 API Key 环境变量 (%s)", ", ".join(LLM_API_KEYS))
+    logger.warning("[WARN] 系统将以降级模式运行：LLM 功能不可用，使用内置规则库替代")
+    logger.warning("[WARN] 如需启用完整 LLM 功能，请设置环境变量，例如：")
+    logger.warning("[WARN]   Windows: set SILICONFLOW_API_KEY=your-key-here")
+    logger.warning("[WARN]   Linux/Mac: export SILICONFLOW_API_KEY=your-key-here")
 
 # ── 数据加载层 ──────────────────────────────────────────────
-RAW_PATH = "../online_shopping_10_cats.csv"
+# 注意：batch_1000_features.csv（label 全为 1、品类单一）和
+# balanced_features_1000.csv（正面全为"书籍"、其他品类全负面）
+# 已在 Week 13 实验中确认存在结构性偏差并彻底废弃，此处不再作为备选。
+# 若主数据文件缺失，使用空 DataFrame 兜底并通过 /api/system-status 透传状态。
 FALLBACK_PATHS = [
     "../online_shopping_10_cats.csv",
-    "../batch_1000_features.csv",
-    "../balanced_features_1000.csv",
 ]
 
 df = None
@@ -73,8 +77,9 @@ for path in FALLBACK_PATHS:
         break
 
 if df is None:
-    logger.error("❌ 未找到任何可用数据文件，使用空 DataFrame 作为兜底")
-    logger.error("❌ 请确保以下文件之一存在: %s", ", ".join(FALLBACK_PATHS))
+    logger.error("[ERROR] 未找到主数据文件: %s", FALLBACK_PATHS[0])
+    logger.error("[ERROR] 使用空 DataFrame 作为兜底，所有 API 将返回空数据")
+    logger.error("[ERROR] 请将 online_shopping_10_cats.csv 放置于项目根目录")
     df = pd.DataFrame(columns=["cat", "review", "sentiment", "label"])
     loaded_path = "(空数据集 — 无可用数据文件)"
 

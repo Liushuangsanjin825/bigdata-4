@@ -52,12 +52,11 @@ Thumbs.db
 
 # ── 环境变量与密钥 ─────────────────────────────────────────
 .env
-.exper.env
+exper.env
 *.local.env
 
 # ── Jupyter Notebook 输出 ─────────────────────────────────
 .ipynb_checkpoints/
-*.ipynb
 
 # ── PDF 课程材料（体积较大）────────────────────────────────
 *.pdf
