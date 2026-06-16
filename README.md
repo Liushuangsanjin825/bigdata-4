@@ -157,13 +157,7 @@ uvicorn server:app --host 127.0.0.1 --port 9000
 
 ### 数据文件配置
 
-系统按优先级从以下文件中加载数据（位于项目根目录）：
-
-1. `online_shopping_10_cats.csv`（主数据源，62,774 条）
-2. `batch_1000_features.csv`（备选）
-3. `balanced_features_1000.csv`（备选）
-
-若所有数据文件均缺失，系统以空数据集兜底启动，不会崩溃。
+系统启动时加载 `online_shopping_10_cats.csv`（62,774 条，10 个品类）作为主数据源。若该文件缺失，服务以空数据集安全启动，并在 `/api/system-status` 中透传降级状态，前端图表显示"暂无数据"。数据文件不入库，需自行放置于项目根目录。
 
 ---
 
@@ -176,32 +170,34 @@ big data/                              # 项目根目录
 ├── .gitignore                         # Git 忽略规则（Week 14 新增）
 ├── README.md                          # 项目文档（本文件）
 │
-├── m1_pipeline.py                     # M1: Polars ETL 管道类定义
-├── run_m1_pipeline.py                 # M1: ETL 运行入口
-├── upload_release.py                  # M1: 数据上传/发布脚本
-├── benchmark.py                       # M1: 性能基准测试
-├── check_parquet_size.py             # M1: Parquet 文件大小检测
-│
-├── m2_producer.py                     # M2: 流式数据生产者
-├── m2_event_generator.py              # M2: 事件模拟生成器
-├── m2_observer.py                     # M2: 背压监控观察者
-│
-├── task_async_pipeline.py             # M3: 异步高并发 API 管道
-├── run_pipeline.py                    # M3: 管道运行入口
-├── main.py                            # M3: LLM 特征提取主程序
-├── verify_retry.py                    # M3: 重试验证脚本
-├── config.py                          # 全局配置
-│
-├── dashboard/                         # M4: Web 看板系统
-│   ├── server.py                      # FastAPI 后端（7 个 API 端点）
-│   ├── requirements.txt               # 看板子模块依赖
-│   └── frontend/
-│       └── index.html                 # 前端看板页面（ECharts 多图联动）
-│
-├── online_shopping_10_cats.csv        # 电商评论数据集（6.2 万条，不入库）
-├── model.pkl                          # 训练好的 ML 模型（不入库）
-│
-└── bigdata1-8.ipynb                   # Week 1-8 Jupyter 实验笔记
+	├── m1_pipeline.py                     # M1: Polars ETL 管道类定义
+	├── run_m1_pipeline.py                 # M1: ETL 运行入口
+	├── m1_tester.py                       # M1: 管道测试脚本
+	├── benchmark.py                       # M1: 性能基准测试
+	├── check_parquet_size.py              # M1: Parquet 文件大小检测
+	├── upload_release.py                  # M1: 数据上传/发布脚本
+	│
+	├── m2_producer.py                     # M2: 流式数据生产者
+	├── m2_event_generator.py              # M2: 事件模拟生成器
+	├── m2_observer.py                     # M2: 背压监控观察者
+	├── requirements_m2.txt                # M2: 子模块依赖
+	│
+	├── task_async_pipeline.py             # M3: 异步高并发 API 管道
+	├── run_pipeline.py                    # M3: 管道运行入口
+	├── main.py                            # M3: LLM 特征提取主程序
+	├── verify_retry.py                    # M3: 重试验证脚本
+	├── task2_test_api.py                  # M3: API 测试脚本
+	├── config.py                          # 全局配置
+	│
+	├── week11_ablation_study.py           # Week 11: 消融实验脚本
+	│
+	├── dashboard/                         # M4: Web 看板系统
+	│   ├── server.py                      # FastAPI 后端（7 个 API 端点）
+	│   ├── requirements.txt               # 看板子模块依赖
+	│   └── frontend/
+	│       └── index.html                 # 前端看板页面（ECharts 多图联动）
+	│
+	└── bigdata1-8.ipynb                   # Week 1-8 Jupyter 实验笔记
 ```
 
 ---
