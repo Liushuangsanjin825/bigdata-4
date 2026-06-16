@@ -198,12 +198,10 @@ big data/                              # 项目根目录
 │   └── frontend/
 │       └── index.html                 # 前端看板页面（ECharts 多图联动）
 │
-├── online_shopping_10_cats.csv        # 电商评论数据集（6.2 万条）
-├── model.pkl                          # 训练好的 ML 模型
+├── online_shopping_10_cats.csv        # 电商评论数据集（6.2 万条，不入库）
+├── model.pkl                          # 训练好的 ML 模型（不入库）
 │
-├── bigdata1-8.ipynb                   # Week 1-8 Jupyter 实验笔记
-├── 9109223126_曹睿杰_实验*.md         # 各周实验报告
-└── week*.pdf                          # 各周实验任务书
+└── bigdata1-8.ipynb                   # Week 1-8 Jupyter 实验笔记
 ```
 
 ---
