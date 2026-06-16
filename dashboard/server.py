@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 import pandas as pd
 import os
 import sys
@@ -18,6 +19,18 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("dashboard")
+
+# ── 加载环境变量 ──────────────────────────────────────────
+try:
+    from dotenv import load_dotenv
+    env_path = Path(__file__).resolve().parent.parent / "exper.env"
+    if env_path.exists():
+        load_dotenv(env_path)
+        logger.info("已加载环境变量: %s", env_path)
+    else:
+        logger.info("未找到 exper.env 文件 (%s)，使用系统环境变量", env_path)
+except ImportError:
+    logger.info("python-dotenv 未安装，使用系统环境变量")
 
 # ── 系统状态追踪 ──────────────────────────────────────────
 _system_status = {
