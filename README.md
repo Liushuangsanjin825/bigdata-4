@@ -131,8 +131,6 @@ API 文档：`http://127.0.0.1:8000/docs`
 |---------|---------|
 | `SILICONFLOW_API_KEY` | 硅基流动 |
 | `DASHSCOPE_API_KEY` | 阿里百炼 |
-| `OPENAI_API_KEY` | OpenAI |
-| `DEEPSEEK_API_KEY` | DeepSeek |
 
 **配置方式：**
 

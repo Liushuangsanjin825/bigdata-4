@@ -31,8 +31,6 @@ _system_status = {
 LLM_API_KEYS = [
     "SILICONFLOW_API_KEY",
     "DASHSCOPE_API_KEY",
-    "OPENAI_API_KEY",
-    "DEEPSEEK_API_KEY",
 ]
 
 _llm_configured = False
